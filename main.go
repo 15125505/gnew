@@ -36,6 +36,8 @@ func main() {
 		return
 	}
 	appName := args[0]
+	fmt.Println("Start to create project", cr3, appName, cr0, "...")
+
 
 	// 创建app路径
 	goPath, err := getFirstGoPath()
@@ -58,6 +60,8 @@ func main() {
 	Check(Write2File(path.Join(appPath, "routers", "router.go"), strings.Replace(strRouter, "{{.AppName}}", appName, -1)))
 	Check(Write2File(path.Join(appPath, "controllers", "controller.go"), strings.Replace(strController, "{{.AppName}}", appName, -1)))
 	Check(Write2File(path.Join(appPath, "controllers", "example.go"), strings.Replace(strExample, "{{.AppName}}", appName, -1)))
+
+	fmt.Println("Project", cr3, appName, cr0, cr2, "has been created successfully!", cr0)
 }
 
 func Check(err error) {
