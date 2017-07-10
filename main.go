@@ -32,7 +32,7 @@ func main() {
 	flag.Parse()
 	args := flag.Args()
 	if len(args) != 1 {
-		fmt.Println(cr1, "Usage：znew [appName]", cr0)
+		fmt.Println(cr1, "Usage：gnew [appName]", cr0)
 		return
 	}
 	appName := args[0]
