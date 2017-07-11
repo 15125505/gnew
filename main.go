@@ -107,210 +107,206 @@ func getFirstGoPath() (goPath string, err error) {
 var strMain = `package main
 
 import (
-    "github.com/gorilla/mux"
-    "net/http"
-    "{{.AppName}}/routers"
-    "fmt"
-    "github.com/urfave/negroni"
-    "time"
-    "github.com/15125505/zlog/log"
-    "sort"
-    "strings"
+	"github.com/gorilla/mux"
+	"net/http"
+	"{{.AppName}}/routers"
+	"github.com/urfave/negroni"
+	"github.com/15125505/zlog/log"
+	_ "{{.AppName}}/controllers" // 这个是为了保证这个包被引入，否则不会调用init函数
 )
 
 func init() {
-    log.Log.SetLogFile("logs/{{.AppName}}")
-    log.Log.SetFileColor(true)
-    log.Log.SetAdditionalErrorFile(true)
-    log.Log.SetLogLevel(log.LevelDebug)
+	log.Log.SetLogFile("logs/{{.AppName}}")
+	log.Log.SetFileColor(true)
+	log.Log.SetAdditionalErrorFile(true)
+	log.Log.SetLogLevel(log.LevelDebug)
 }
-
 
 func main() {
-    r := mux.NewRouter()
-    rr := routers.NewRouter(r)
-    rr.CreateHandle()
-    n := negroni.New(negroni.NewRecovery(), negroni.NewStatic(http.Dir("public")), negroni.HandlerFunc(PreProcess))
-    n.UseHandler(r)
-    n.Run(":5000")
+	r := mux.NewRouter()
+	routers.CreateHandle(r)
+	n := negroni.New(negroni.NewRecovery(), negroni.NewStatic(http.Dir("public")), negroni.HandlerFunc(routers.PreProcess))
+	n.UseHandler(r)
+	n.Run(":5000")
 }
-
-func PreProcess(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
-
-    // 在页面被处理之前，你可以做一些工作
-    start := time.Now()
-
-    // 这句代码放在next之前，可以避免每次获取参数之前都进行ParseForm操作
-    r.ParseForm()
-
-    // 继续后续的处理
-    next(rw, r)
-
-    // 获取http状态码
-    res := rw.(negroni.ResponseWriter)
-    code := res.Status()
-    var color string
-    switch {
-    case code >= 200 && code < 300:
-        color = "\033[01;42;34m" // 绿色
-    case code >= 300 && code < 400:
-        color = "\033[01;47;34m" // 白色
-    case code >= 400 && code < 500:
-        color = "\033[01;43;34m" // 黄色
-    default:
-        color = "\033[01;41;33m" // 红色
-    }
-
-    // 获取参数信息
-    var keys []string
-    for k := range r.Form {
-        keys = append(keys, k)
-    }
-    sort.Strings(keys)
-    var param string
-    for _, k := range keys {
-        param += " " + k + ":"
-        param += fmt.Sprint(r.Form[k])
-    }
-    param = strings.TrimLeft(param, " ")
-
-    // 获取请求者IP地址
-    ip := "127.0.0.1"
-    if forwards := r.Header.Get("X-Forwarded-For"); forwards != "" {
-        ips := strings.Split(forwards, ",")
-        if len(ips) > 0 {
-            ip = ips[0]
-        }
-    } else {
-        ip = r.RemoteAddr
-    }
-    ips := strings.Split(ip, ":")
-    if len(ips) > 0 {
-        ip = ips[0]
-    }
-
-    // 显示请求详情
-    tmpUA := []byte(r.UserAgent())
-    if len(tmpUA) > 40 {
-        tmpUA = tmpUA[:40]
-    }
-    if r.Method == "HEAD" {
-        // 为了避免阿里云的SLB日志过多，不打印HEAD请求，
-        return
-    }
-    log.Info(fmt.Sprintf("%v %v \033[0m\033[37m|%12v\033[32m|%15s\033[01;37m|%5v\033[0m\033[33m|%40v\033[32m|%v\033[33m|%v",
-        color,
-        res.Status(),
-        time.Since(start),
-        ip,
-        r.Method,
-        string(tmpUA),
-        r.URL.Path,
-        param,
-    ))
-}`
+`
 
 var strRouter = `package routers
 
 import (
-    "github.com/gorilla/mux"
-    "{{.AppName}}/controllers"
+	"github.com/gorilla/mux"
+	"strings"
+	"fmt"
+	"time"
+	"sort"
+	"net/http"
+	"github.com/urfave/negroni"
+	"github.com/15125505/zlog/log"
 )
 
-// 根路由
-type Router struct {
-    r *mux.Router
+// 子路由必须实现的接口
+type SubController interface {
+	Handle(m *mux.Router, tpl string)
 }
 
-// 创建一个根路由实例
-func NewRouter(r *mux.Router) (*Router) {
-    return &Router{r: r}
+// 用于存储用户参数的结构
+type handle struct {
+	sub SubController
+	tpl string
 }
 
-// 创建路由
-func (r *Router) CreateHandle() {
+// 用户路由信息表
+var handles []handle
 
-    // todo: 添加自定义的Controller（Controller名字和前缀名字需要设置）
-    (&controllers.ExampleController{*controllers.NewController(r.r, "/example")}).Handle()
-}`
+// 添加控制器
+func AddController(sub SubController, tpl string) {
+	handles = append(handles, handle{sub, tpl})
+}
+
+// 设置路由
+func CreateHandle(m *mux.Router) {
+	for _, v := range handles {
+		v.sub.Handle(m, v.tpl)
+	}
+}
+
+// 预处理（解析参数和日期打印）
+func PreProcess(rw http.ResponseWriter, r *http.Request, next http.HandlerFunc) {
+
+	// 在页面被处理之前，你可以做一些工作
+	start := time.Now()
+
+	// 这句代码放在next之前，可以避免每次获取参数之前都进行ParseForm操作
+	r.ParseForm()
+
+	// 继续后续的处理
+	next(rw, r)
+
+	// 为了避免阿里云的SLB日志过多，不打印HEAD请求，
+	if r.Method == "HEAD" {
+		return
+	}
+
+	// 获取http状态码
+	res := rw.(negroni.ResponseWriter)
+	code := res.Status()
+	var color string
+	switch {
+	case code >= 200 && code < 300:
+		color = "\033[01;42;34m" // 绿色
+	case code >= 300 && code < 400:
+		color = "\033[01;47;34m" // 白色
+	case code >= 400 && code < 500:
+		color = "\033[01;43;34m" // 黄色
+	default:
+		color = "\033[01;41;33m" // 红色
+	}
+
+	// 获取参数信息
+	var keys []string
+	for k := range r.Form {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var param string
+	for _, k := range keys {
+		param += " " + k + ":"
+		param += fmt.Sprint(r.Form[k])
+	}
+	param = strings.TrimLeft(param, " ")
+
+	// 获取请求者IP地址
+	ip := "127.0.0.1"
+	if forwards := r.Header.Get("X-Forwarded-For"); forwards != "" {
+		ips := strings.Split(forwards, ",")
+		if len(ips) > 0 {
+			ip = ips[0]
+		}
+	} else {
+		ip = r.RemoteAddr
+	}
+	ips := strings.Split(ip, ":")
+	if len(ips) > 0 {
+		ip = ips[0]
+	}
+
+	// 显示请求详情
+	tmpUA := []byte(r.UserAgent())
+	if len(tmpUA) > 40 {
+		tmpUA = tmpUA[:40]
+	}
+
+	log.Info(fmt.Sprintf("%v %v \033[0m\033[37m|%12v\033[32m|%15s\033[01;37m|%5v\033[0m\033[33m|%40v\033[32m|%v\033[33m|%v",
+		color,
+		res.Status(),
+		time.Since(start),
+		ip,
+		r.Method,
+		string(tmpUA),
+		r.URL.Path,
+		param,
+	))
+}
+`
 
 var strController = `package controllers
 
 import (
-    "net/http"
-    "github.com/gorilla/mux"
-    "github.com/unrolled/render"
+	"github.com/unrolled/render"
 )
 
-
-// Controller基类定义
-type Controller struct {
-    muxRounter *mux.Router
-    subRounter *mux.Router
-}
-
+// 定义一个用于json或者xml等各种渲染的公共渲染模块
 var Render *render.Render = render.New()
-
-
-// 创建一个Controller实例
-func NewController(r *mux.Router, tpl string) (*Controller) {
-    return &Controller{
-        muxRounter: r,
-        subRounter: r.PathPrefix(tpl).Subrouter(),
-    }
-}
-
-
-// 添加路由
-func (c *Controller) HandleFunc(path string, f func(http.ResponseWriter,
-    *http.Request)) (*mux.Route) {
-    return c.muxRounter.HandleFunc(path, f)
-}
-
-// 添加子路由
-func (c *Controller) HandleSubFunc(path string, f func(http.ResponseWriter,
-    *http.Request)) (*mux.Route) {
-    return c.subRounter.HandleFunc(path, f)
-}`
+`
 
 var strExample = `package controllers
 
 import (
-    "net/http"
+	"net/http"
+	"{{.AppName}}/routers"
+	"github.com/gorilla/mux"
 )
 
-// todo: 从Controller类派生一个自己的类
+// todo: 定义一个自己的Controller类
 type ExampleController struct {
-    Controller
+}
+
+// 初始化
+func init() {
+	// todo: 此处需要设置子路由的前缀
+	routers.AddController(&ExampleController{}, "/example")
 }
 
 // todo: 为自己的类添加一个这样的Handle函数，注意名称不能随意改动
-func (c *ExampleController) Handle() {
+func (c *ExampleController) Handle(m *mux.Router, tpl string) {
 
-    // todo: 本函数演示了使用绝对路由的方式
-    c.HandleFunc("/path1", absolutePath)
+	sub := m.PathPrefix(tpl).Subrouter()
 
-    // todo: 本函数演示了使用相对路由的方式
-    c.HandleSubFunc("/path2", relativePath).Methods("POST")
+	// todo: 本函数演示了使用绝对路由的方式
+	m.HandleFunc("/path1", absolutePath)
+
+	// todo: 本函数演示了使用相对路由的方式
+	sub.HandleFunc("/path2", relativePath).Methods("POST")
 }
 
 // todo: 访问 http://localhost:5000/path1 将触发本函数的反馈
 func absolutePath(w http.ResponseWriter, r *http.Request) {
 
-    // todo:本函数演示了json的输出方法
-    type o struct {
+	// todo:本函数演示了json的输出方法
+	type o struct {
         A int ` + "`" + `json:"IntValue"` + "`" + `
         B string ` + "`" + `json:"StringValue"` + "`" + `
     }
-    Render.JSON(w, http.StatusOK, o{1, "This is a string value."})
-    return
+	Render.JSON(w, http.StatusOK, o{1, "This is a string value."})
+	return
 }
 
 // todo: 使用POST方式访问 http://localhost:5000/example/path2 将触发本函数的反馈
 func relativePath(w http.ResponseWriter, r *http.Request) {
-    w.Write([]byte("This is a relative path."))
-    return
-}`
+	w.Write([]byte("This is a relative path."))
+	return
+}
+`
 
 var strGitignore = `.idea
 *.exe
